@@ -6,8 +6,10 @@ from torch.autograd import Variable
 
 from caser import Caser
 from evaluation import evaluate_ranking
+from evaluation import evaluate_hits_ndcg
 from interactions import Interactions
 from utils import *
+import numpy as np
 
 
 class Recommender(object):
@@ -177,8 +179,17 @@ class Recommender(object):
             epoch_loss /= minibatch_num + 1
 
             t2 = time()
-            if verbose and (epoch_num + 1) % 10 == 0:
-                precision, recall, mean_aps = evaluate_ranking(self, test, train, k=[1, 5, 10])
+            if verbose and (epoch_num == 0 or (epoch_num + 1) % 10 == 0):
+                output_str = "Epoch %d [%.1f s]\tloss=%.4f [%.1f s]" % (epoch_num + 1,
+                                                                        t2 - t1,
+                                                                        epoch_loss,
+                                                                        time() - t2)
+                print(output_str)
+                hits, ndcg = evaluate_hits_ndcg(self, train, test)
+                print(f'hits@10: {hits}, ndcg@10: {ndcg}')
+                
+                """
+                precision, recall, mean_aps, hits = evaluate_ranking(self, test, train, k=[1, 5, 10])
                 output_str = "Epoch %d [%.1f s]\tloss=%.4f, map=%.4f, " \
                              "prec@1=%.4f, prec@5=%.4f, prec@10=%.4f, " \
                              "recall@1=%.4f, recall@5=%.4f, recall@10=%.4f, [%.1f s]" % (epoch_num + 1,
@@ -193,12 +204,14 @@ class Recommender(object):
                                                                                          np.mean(recall[2]),
                                                                                          time() - t2)
                 print(output_str)
+                """
             else:
                 output_str = "Epoch %d [%.1f s]\tloss=%.4f [%.1f s]" % (epoch_num + 1,
                                                                         t2 - t1,
                                                                         epoch_loss,
                                                                         time() - t2)
                 print(output_str)
+                
 
     def _generate_negative_samples(self, users, interactions, n):
         """
@@ -219,11 +232,21 @@ class Recommender(object):
 
         users_ = users.squeeze()
         negative_samples = np.zeros((users_.shape[0], n), np.int64)
+        
+        sample_limit = 200
+        
         if not self._candidate:
             all_items = np.arange(interactions.num_items - 1) + 1  # 0 for padding
             train = interactions.tocsr()
             for user, row in enumerate(train):
-                self._candidate[user] = list(set(all_items) - set(row.indices))
+                self._candidate[user] = []
+                
+                while len(self._candidate[user]) < n:
+                    cur_items = all_items
+                    if len(cur_items) > 5000:
+                        cur_items = np.random.choice(all_items, size=sample_limit, replace=False)
+                
+                    self._candidate[user] = list(set(cur_items) - set(row.indices))
 
         for i, u in enumerate(users_):
             for j in range(n):
@@ -276,13 +299,13 @@ class Recommender(object):
                             for_pred=True)
 
         return out.cpu().numpy().flatten()
-
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # data arguments
-    parser.add_argument('--train_root', type=str, default='datasets/ml1m/test/train.txt')
-    parser.add_argument('--test_root', type=str, default='datasets/ml1m/test/test.txt')
+    parser.add_argument('--train_root', type=str, default='data/ml-1m/train.txt')
+    parser.add_argument('--test_root', type=str, default='data/ml-1m/test.txt')
     parser.add_argument('--L', type=int, default=5)
     parser.add_argument('--T', type=int, default=3)
     # train arguments
@@ -314,12 +337,15 @@ if __name__ == '__main__':
 
     # load dataset
     train = Interactions(config.train_root)
+    train.tocsr()
+    
     # transform triplets to sequence representation
     train.to_sequence(config.L, config.T)
 
     test = Interactions(config.test_root,
                         user_map=train.user_map,
                         item_map=train.item_map)
+    test.tocsr()
 
     print(config)
     print(model_config)
