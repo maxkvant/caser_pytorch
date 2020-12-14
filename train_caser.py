@@ -211,7 +211,9 @@ class Recommender(object):
                                                                         epoch_loss,
                                                                         time() - t2)
                 print(output_str)
-                
+            if (epoch_num + 1) % 5 == 0:
+                self._candidate = dict()
+            
 
     def _generate_negative_samples(self, users, interactions, n):
         """
